@@ -1,0 +1,17 @@
+# dnf-based sibling of base/ubuntu: own Dockerfile, same rootfs.
+name: fedora-core
+layer: base
+os: fedora-43
+buildContexts:
+  rootfs: base/rootfs
+description: >
+  Headless Fedora graphical session (TigerVNC Xvnc + openbox fallback)
+  over VNC, PulseAudio for guacd's VNC audio stream, non-root,
+  read-only-rootfs friendly.
+icon: fedora
+
+variants:
+  - name: core-fedora-43
+    smoke:
+      vnc: true
+      audio: true

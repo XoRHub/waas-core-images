@@ -1,0 +1,30 @@
+name: merge
+description: >-
+  Assemble the per-arch tags into the g<sha> manifest list; with
+  `publish`, also move `edge`, cosign-sign and attest the SBOM. With
+  `carry`, retag the current `edge` digest to g<sha> instead (no build).
+  Needs `packages: write` and, for publish, `id-token: write`.
+inputs:
+  image:
+    description: One entry of a pipeline merge or carry matrix, as JSON.
+    required: true
+  publish:
+    description: Default-branch run — move `edge`, sign, attest.
+    default: "false"
+  carry:
+    description: Retag `edge` to g<sha> instead of assembling arch tags.
+    default: "false"
+  token:
+    description: Registry password (GITHUB_TOKEN).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Merge manifest list
+      shell: bash
+      env:
+        IMAGE_JSON: ${{ inputs.image }}
+        REGISTRY_PASSWORD: ${{ inputs.token }}
+        PUBLISH: ${{ inputs.publish == 'true' && '1' || '0' }}
+        IMG_CARRY: ${{ inputs.carry == 'true' && '1' || '0' }}
+      run: sh "${{ github.action_path }}/merge_image.sh"

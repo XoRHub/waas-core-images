@@ -1,0 +1,25 @@
+# One directory = one image family; each variant is one published image.
+# The Dockerfile is OS-parameterized (ARG OS_BASE_IMAGE): the debian
+# variant builds from the same file via images.yaml's os: map.
+name: ubuntu-core
+layer: base
+buildContexts:
+  rootfs: base/rootfs
+description: >
+  Headless apt-based graphical session (TigerVNC Xvnc + openbox
+  fallback) over VNC, PulseAudio for guacd's VNC audio stream, non-root,
+  read-only-rootfs friendly.
+icon: ubuntu-linux
+
+variants:
+  - name: core-ubuntu-noble
+    smoke:
+      vnc: true
+      audio: true
+
+  - name: core-debian-13
+    os: debian-13
+    icon: debian-linux
+    smoke:
+      vnc: true
+      audio: true

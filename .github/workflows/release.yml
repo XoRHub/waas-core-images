@@ -1,0 +1,127 @@
+# release — promote the g<sha> images of a main commit to vX.Y.Z (zero
+# build), then create the git tag + GitHub Release. Promotion happens
+# here rather than on a tag trigger: a tag pushed with GITHUB_TOKEN
+# never fires another workflow.
+#
+# Triggers: manual (bump choice); rebuild-weekly (workflow_call, patch);
+# automatic after a green main build whose commit came from a PR
+# labelled `auto-release` (Renovate patch updates, see renovate.json).
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  workflow_call:
+    inputs:
+      bump:
+        type: string
+        default: patch
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    if: >-
+      github.ref_name == github.event.repository.default_branch
+      && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+      version: ${{ steps.next.outputs.version }}
+      sha: ${{ env.SHA }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          proceed=true
+          if [ "${GITHUB_EVENT_NAME}" = workflow_run ]; then
+            labels=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" --jq '.[].labels[].name')
+            case " ${labels} " in *" auto-release "*) ;; *) proceed=false ;; esac
+          fi
+          echo "proceed=${proceed}" >> "$GITHUB_OUTPUT"
+      - id: next
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "${latest}" ]; then
+            next=1.0.0
+          else
+            IFS=. read -r major minor patch <<<"${latest#v}"
+            case "${BUMP}" in
+              major) next="$((major + 1)).0.0" ;;
+              minor) next="${major}.$((minor + 1)).0" ;;
+              patch) next="${major}.${minor}.$((patch + 1))" ;;
+              *) echo "bump must be patch|minor|major, got '${BUMP}'"; exit 1 ;;
+            esac
+          fi
+          echo "${latest:-none} -> v${next}"
+          echo "version=${next}" >> "$GITHUB_OUTPUT"
+
+  setup:
+    needs: version
+    if: needs.version.outputs.proceed == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      variants: ${{ steps.pipeline.outputs.variants }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      - id: pipeline
+        uses: ./.github/actions/pipeline
+        with:
+          all: "true"
+          max-depth: 0
+
+  promote:
+    needs: [version, setup]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.variants) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      - uses: ./.github/actions/promote
+        with:
+          image: ${{ toJSON(matrix) }}
+          version: ${{ needs.version.outputs.version }}
+          sha: ${{ needs.version.outputs.sha }}
+
+  tag:
+    needs: [version, promote]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TARGET: ${{ needs.version.outputs.sha }}
+        run: gh release create "v${VERSION}" --target "${TARGET}" --title "v${VERSION}" --generate-notes

@@ -1,0 +1,34 @@
+# Global build configuration, merged with every <layer>/*/manifest.yaml
+# by .github/actions/pipeline/generate_pipeline.py.
+
+# Directories scanned for manifests, in dependency order.
+layers: [base]
+
+# Base OS matrix. Manifests (or individual variants) reference an entry
+# via `os:`; the buildArgs feed the parameterized FROM of the Dockerfile.
+# Ubuntu keys use the codename (core-ubuntu-noble), Debian/Fedora their
+# numeric release.
+os:
+  ubuntu-noble:
+    buildArgs:
+      OS_BASE_IMAGE: "ubuntu:24.04"
+  debian-13:
+    buildArgs:
+      OS_BASE_IMAGE: "debian:13-slim"
+  fedora-43:
+    buildArgs:
+      OS_BASE_IMAGE: "fedora:43"
+
+defaults:
+  os: ubuntu-noble
+  archs: [linux/amd64, linux/arm64]
+  # Fixed identity baked into every image; must match the operator's
+  # /home/waas_user mount and the recommended pod fsGroup (CONTRACT.md).
+  buildArgs:
+    WAAS_UID: "1000"
+    WAAS_GID: "1000"
+
+# Trivy gate (scan action): fail on these severities.
+scan:
+  severity: HIGH,CRITICAL
+  ignoreUnfixed: true

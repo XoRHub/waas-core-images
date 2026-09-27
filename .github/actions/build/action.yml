@@ -1,0 +1,32 @@
+name: build
+description: >-
+  Build, smoke-test and push one image for one architecture
+  (g<sha>-<arch>, GHCR). Needs `packages: write`.
+inputs:
+  image:
+    description: One entry of a pipeline layer matrix, as JSON (`toJSON(matrix)`).
+    required: true
+  no-cache:
+    description: Rebuild every layer from scratch, ignoring the GHA layer cache.
+    default: "false"
+  token:
+    description: Registry password (GITHUB_TOKEN).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v9.0.0
+    # Recipe manifests need their Dockerfile.generated in the checkout.
+    - name: Materialise recipe Dockerfiles
+      shell: bash
+      run: uv run "${{ github.action_path }}/../pipeline/generate_pipeline.py" --all --output "${RUNNER_TEMP}/matrices.json" >/dev/null
+    # buildx talks to the GHA cache service directly (type=gha); this
+    # exposes the endpoint + token the plain CLI cannot discover itself.
+    - uses: crazy-max/ghaction-github-runtime@v4.0.0
+    - name: Build, smoke, push
+      shell: bash
+      env:
+        IMAGE_JSON: ${{ inputs.image }}
+        REGISTRY_PASSWORD: ${{ inputs.token }}
+        NO_CACHE: ${{ inputs.no-cache == 'true' && '1' || '0' }}
+      run: sh "${{ github.action_path }}/build_image.sh"

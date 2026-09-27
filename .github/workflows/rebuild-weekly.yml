@@ -1,0 +1,29 @@
+# rebuild-weekly — full no-cache rebuild of every image to pick up OS
+# package updates (no RUN text changes, so the layer cache would keep
+# serving stale layers), then a patch release if everything is green.
+# The one release without a PR: it produces the version Renovate then
+# proposes to the workspace images.
+name: rebuild-weekly
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  actions: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      no_cache: true
+
+  release:
+    needs: build
+    uses: ./.github/workflows/release.yml
+    with:
+      bump: patch

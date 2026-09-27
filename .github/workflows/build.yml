@@ -1,0 +1,158 @@
+# build — PR: build the impacted images, smoke, trivy. main: same, plus
+# carry-forward of the untouched ones (retag from edge), so every main
+# commit carries the full set as g<sha>, and `edge` moves to it.
+# Promotion to a release is release.yml.
+#
+# Static skeleton, dynamic matrices: the pipeline action decides what
+# to build. This repo has a single dependency depth; a deeper tree adds
+# a layer-N/scan-N/merge-N set (layer-N needs carry + merge-N-1) and
+# raises max-depth.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      no_cache:
+        description: Rebuild every layer from scratch, ignoring the GHA layer cache.
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      no_cache:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  actions: read
+
+# main runs queue: carry-forward reads `edge`, which the previous run's
+# merge must have moved first. PR runs supersede each other.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # qemu routes every build to the amd64 fleet under emulation.
+  WAAS_IMAGES_BUILD_STRATEGY: ${{ vars.WAAS_IMAGES_BUILD_STRATEGY || 'native' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: hadolint
+        run: |
+          # shellcheck disable=SC2046
+          docker run --rm -v "$PWD:/mnt" -w /mnt ghcr.io/hadolint/hadolint:2.12.0-alpine \
+            hadolint --failure-threshold warning $(find . -name Dockerfile -o -name Dockerfile.generated)
+      - name: shellcheck
+        run: shellcheck -S warning .github/actions/lib.sh .github/actions/*/*.sh base/rootfs/usr/local/bin/*
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+      - uses: astral-sh/setup-uv@v9.0.0
+      - name: Toolkit unit tests
+        run: uv run --with pyyaml==6.0.2 python -m unittest discover -s ci/tests -v
+
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      layer0: ${{ steps.pipeline.outputs.layer0 }}
+      merge0: ${{ steps.pipeline.outputs.merge0 }}
+      carry: ${{ steps.pipeline.outputs.carry }}
+      scan_severity: ${{ steps.pipeline.outputs.scan_severity }}
+      scan_ignore_unfixed: ${{ steps.pipeline.outputs.scan_ignore_unfixed }}
+      publish: ${{ github.ref_name == github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Diff base: the last green push build of this branch (not the
+      # previous commit — a failed or cancelled run must not leave its
+      # changes unbuilt), or the PR base. None → everything.
+      - id: since
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "${GITHUB_EVENT_NAME}" in
+            push) since=$(gh run list --workflow build.yml --branch "${GITHUB_REF_NAME}" --event push \
+                    --status success --limit 1 --json headSha --jq '.[0].headSha // ""') ;;
+            pull_request) since="${PR_BASE}" ;;
+            *) since="" ;;
+          esac
+          echo "since=${since}" >> "$GITHUB_OUTPUT"
+      - id: pipeline
+        uses: ./.github/actions/pipeline
+        with:
+          since: ${{ steps.since.outputs.since }}
+          all: ${{ github.event_name != 'push' && github.event_name != 'pull_request' }}
+          max-depth: 0
+
+  carry:
+    needs: setup
+    if: needs.setup.outputs.carry != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.carry) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/merge
+        with:
+          image: ${{ toJSON(matrix) }}
+          carry: "true"
+          publish: ${{ needs.setup.outputs.publish }}
+
+  layer-0:
+    needs: [lint, setup]
+    if: needs.setup.outputs.layer0 != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.layer0) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/build
+        with:
+          image: ${{ toJSON(matrix) }}
+          no-cache: ${{ inputs.no_cache || false }}
+
+  # trivy only inspects the pushed image remotely: always ubuntu-24.04.
+  scan-0:
+    needs: [setup, layer-0]
+    if: needs.setup.outputs.layer0 != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.layer0) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/scan
+        with:
+          image: ${{ toJSON(matrix) }}
+          severity: ${{ needs.setup.outputs.scan_severity }}
+          ignore-unfixed: ${{ needs.setup.outputs.scan_ignore_unfixed }}
+
+  merge-0:
+    needs: [setup, layer-0]
+    if: needs.setup.outputs.merge0 != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.merge0) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/merge
+        with:
+          image: ${{ toJSON(matrix) }}
+          publish: ${{ needs.setup.outputs.publish }}

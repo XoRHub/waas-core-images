@@ -1,0 +1,26 @@
+name: scan
+description: Trivy vulnerability/secret scan of one pushed g<sha>-<arch> tag.
+inputs:
+  image:
+    description: One entry of a pipeline layer matrix, as JSON.
+    required: true
+  severity:
+    description: Severities that fail the scan (pipeline `scan_severity` output).
+    default: HIGH,CRITICAL
+  ignore-unfixed:
+    description: Ignore findings without a fix (pipeline `scan_ignore_unfixed` output).
+    default: "true"
+  token:
+    description: Registry password (GITHUB_TOKEN).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Trivy scan
+      shell: bash
+      env:
+        IMAGE_JSON: ${{ inputs.image }}
+        REGISTRY_PASSWORD: ${{ inputs.token }}
+        TRIVY_SEVERITY: ${{ inputs.severity }}
+        TRIVY_IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
+      run: sh "${{ github.action_path }}/scan_image.sh"

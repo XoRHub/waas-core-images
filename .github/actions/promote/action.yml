@@ -1,0 +1,33 @@
+name: promote
+description: >-
+  Retag one image's g<sha> manifest list to X.Y.Z (immutable), X.Y and
+  latest, then cosign-sign. Zero build, idempotent. Needs
+  `packages: write` and `id-token: write`.
+inputs:
+  image:
+    description: One entry of the pipeline `variants` matrix, as JSON.
+    required: true
+  version:
+    description: Release version, X.Y.Z (no v prefix).
+    required: true
+  sha:
+    description: Commit whose g<sha> images are promoted.
+    required: true
+  latest:
+    description: Also move the `latest` tag.
+    default: "true"
+  token:
+    description: Registry password (GITHUB_TOKEN).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Promote
+      shell: bash
+      env:
+        IMAGE_JSON: ${{ inputs.image }}
+        REGISTRY_PASSWORD: ${{ inputs.token }}
+        COMMIT_SHA: ${{ inputs.sha }}
+        RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_LATEST: ${{ inputs.latest == 'true' && '1' || '0' }}
+      run: sh "${{ github.action_path }}/promote_image.sh"

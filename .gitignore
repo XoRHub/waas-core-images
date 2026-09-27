@@ -1,0 +1,7 @@
+.claude/*
+!.claude/skills/
+Dockerfile.generated
+__pycache__/
+github-matrices.json
+sbom.cdx.json
+

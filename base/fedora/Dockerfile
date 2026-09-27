@@ -1,0 +1,103 @@
+# syntax=docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
+#
+# waas fedora base — headless graphical session over VNC.
+#
+# dnf-based sibling of base/ubuntu/Dockerfile: same design (TigerVNC
+# Xvnc as THE X server and the only remote-access protocol, unprivileged
+# PulseAudio null sink on tcp:4713, tini + supervisord), same runtime
+# contract, same rootfs (base/rootfs, a shared build context).
+#
+# Package-name deltas vs the apt base (verified against Fedora 43, not
+# assumed): TigerVNC is split three ways (tigervnc-x11-server = Xvnc,
+# tigervnc-server-common = vncconfig, tigervnc-server-minimal =
+# vncpasswd); xauth is xorg-x11-xauth; dbus-uuidgen lives in dbus-tools;
+# x11-xserver-utils is exploded (only xrandr is actually used, by
+# waas-resize); fonts are dejavu-sans-fonts + xorg-x11-fonts-misc.
+
+ARG OS_BASE_IMAGE=fedora:43
+# hadolint ignore=DL3006
+FROM ${OS_BASE_IMAGE}
+
+# Fixed, overridable identity. The home path follows WAAS_USER
+# (/home/waas_user by default) and must match the operator's
+# DefaultHomeMountPath (waas), where the Workspace home PVC is
+# mounted — the two repos change this value together.
+ARG WAAS_USER=waas_user
+ARG WAAS_UID=1000
+ARG WAAS_GID=1000
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# install_weak_deps=False is dnf's --no-install-recommends.
+# hadolint ignore=DL3041
+RUN dnf install -y --setopt=install_weak_deps=False \
+        tigervnc-x11-server \
+        tigervnc-server-common \
+        tigervnc-server-minimal \
+        supervisor \
+        tini \
+        openbox \
+        xterm \
+        xorg-x11-xauth \
+        xrandr \
+        dbus-x11 \
+        dbus-tools \
+        pulseaudio \
+        pulseaudio-utils \
+        dejavu-sans-fonts \
+        xorg-x11-fonts-misc \
+        ca-certificates && \
+    # dbus-launch (session bus) wants a machine id; bake one so it works
+    # on a read-only rootfs. Identical across containers — acceptable, it
+    # is not used as an identity by anything we run.
+    dbus-uuidgen > /etc/machine-id && \
+    dnf clean all && \
+    rm -rf /var/cache/* /var/log/* && \
+    # Fail the build (not the runtime) if a packaging change moves one of
+    # the binaries the rootfs scripts invoke.
+    command -v Xvnc vncconfig vncpasswd supervisord tini openbox xterm \
+        xauth xrandr dbus-launch pulseaudio pactl >/dev/null
+
+# Non-root user with fixed UID/GID (no default UID-1000 squatter on
+# Fedora images — verified; kept unconditional-safe anyway).
+RUN if id -u 1000 >/dev/null 2>&1; then userdel -r "$(id -un 1000)"; fi && \
+    groupadd -g "${WAAS_GID}" "${WAAS_USER}" && \
+    # Home is /home/waas_user: the mount path the operator uses for the
+    # persistent home PVC (DefaultHomeMountPath in waas).
+    useradd -l -m -u "${WAAS_UID}" -g "${WAAS_GID}" -d /home/waas_user -s /bin/bash "${WAAS_USER}"
+
+# Drop every setuid/setgid bit: nothing we run needs privilege escalation,
+# and this neutralises su/passwd/chfn/... even if a shell is reached.
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
+
+# hadolint ignore=DL3022
+COPY --from=rootfs / /
+
+RUN chmod 0755 /usr/local/bin/waas-entrypoint /usr/local/bin/waas-session /usr/local/bin/waas-resize
+
+# ---- Runtime contract (consumed by the Workspace operator) ----
+# Port 5901: RFB/VNC (guacd protocol "vnc"). TCP-open == session ready.
+# Port 4713: PulseAudio native protocol for guacd's VNC audio stream,
+#            unless WAAS_AUDIO_ENABLED=0.
+EXPOSE 5901 4713
+
+ENV WAAS_USER=${WAAS_USER} \
+    HOME=/home/waas_user \
+    DISPLAY=:1 \
+    WAAS_RUNTIME_DIR=/tmp/waas \
+    WAAS_AUDIO_ENABLED=1 \
+    # WAAS_VNC_RESOLUTION / WAAS_VNC_COL_DEPTH deliberately have NO baked
+    # ENV default: their defaults live in the entrypoint, because an
+    # always-set WAAS_* value would defeat the legacy aliases
+    # (VNC_RESOLUTION / VNC_COL_DEPTH — WAAS_* wins when both are set).
+    WAAS_STARTUP= \
+    WAAS_APP=
+
+USER ${WAAS_UID}:${WAAS_GID}
+WORKDIR /home/waas_user
+
+# tini is PID 1 (signal forwarding + zombie reaping); the entrypoint
+# renders runtime config then execs supervisord in the foreground.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/waas-entrypoint"]

@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# waas-entrypoint — renders runtime config from env, then execs supervisord.
+#
+# Everything mutable lives under $WAAS_RUNTIME_DIR (default /tmp/waas) so
+# the image runs with a read-only rootfs given two writable mounts:
+#   /home/waas_user  (PVC, mounted by the operator)
+#   /tmp             (emptyDir/tmpfs)
+#
+# Secrets are runtime-only: the desktop password arrives via env
+# (WAAS_DESKTOP_PASSWORD — the VNC session password), is written 0600
+# into the runtime dir in VNC-hashed form, and is scrubbed from the
+# environment before any service starts.
+#
+# Env naming contract: everything this script interprets is WAAS_-prefixed.
+# Legacy ecosystem names are refused loudly when secret-bearing (VNC_PW,
+# RDP_PASSWORD) and honored as fallback aliases when purely cosmetic
+# (VNC_RESOLUTION, VNC_COL_DEPTH) — see README § Env naming.
+set -euo pipefail
+
+log()  { printf 'waas-entrypoint: %s\n' "$*" >&2; }
+fail() { log "FATAL: $*"; exit 1; }
+
+RUNDIR="${WAAS_RUNTIME_DIR:-/tmp/waas}"
+umask 077
+mkdir -p "${RUNDIR}/supervisor.d"
+
+# Reduced-hardening builds (*-dev variants, WAAS_PROFILE=dev baked at
+# build time) announce themselves loudly.
+if [[ "${WAAS_PROFILE:-standard}" == "dev" ]]; then
+    log "WARNING: dev-profile image (WAAS_PROFILE=dev) — sudo is enabled for UID 1000; keep this image behind its catalog group gate (see HARDENING.md § Reduced profile)"
+fi
+
+# ---------------------------------------------------------------- password
+# A password is ALWAYS required — no image ever boots with an open session.
+# Tombstone, not fallback: honoring VNC_PW here would let a template set it
+# while the platform (which only knows WAAS_DESKTOP_PASSWORD) sees no
+# explicit source, generates its own password on top, and silently shadows
+# the admin's — refusing loudly turns that trap into a readable crashloop.
+[[ -z "${VNC_PW:-}" ]] || fail "VNC_PW is not supported: set WAAS_DESKTOP_PASSWORD"
+[[ -z "${RDP_PASSWORD:-}" ]] || fail "RDP_PASSWORD is not supported: set WAAS_DESKTOP_PASSWORD"
+PASSWORD="${WAAS_DESKTOP_PASSWORD:-}"
+[[ -n "${PASSWORD}" ]] || fail "no desktop password: set WAAS_DESKTOP_PASSWORD from a Kubernetes Secret"
+printf '%s\n' "${PASSWORD}" | vncpasswd -f > "${RUNDIR}/vnc.passwd"
+chmod 0600 "${RUNDIR}/vnc.passwd"
+
+# Scrub: children of supervisord must not inherit the cleartext secret
+# (visible in /proc/*/environ to anything running in the session).
+unset PASSWORD WAAS_DESKTOP_PASSWORD
+export WAAS_DESKTOP_PASSWORD=''
+
+# -------------------------------------------------------------- X authority
+# Proper cookie auth for the X display instead of Xvnc -ac.
+export XAUTHORITY="${RUNDIR}/Xauthority"
+: > "${XAUTHORITY}"
+xauth add "${DISPLAY:-:1}" MIT-MAGIC-COOKIE-1 "$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
+# ------------------------------------------------------------------- home
+# First boot on a fresh PVC: the volume shadows the baked home, so seed it.
+if [[ ! -e "${HOME}/.profile" ]]; then
+    log "seeding empty home from /etc/skel"
+    cp -rT /etc/skel "${HOME}" 2>/dev/null || true
+fi
+mkdir -p "${HOME}/Desktop" 2>/dev/null || true
+
+# ------------------------------------------------------------------- Xvnc
+# Cosmetic knobs keep a legacy alias (headless-VNC ecosystem heritage): the
+# platform never reads them, so the alias cannot diverge from an operator
+# decision. WAAS_* wins when both are set; defaults live HERE, not as baked
+# ENV (an always-set WAAS_* default would defeat the alias).
+[[ -z "${VNC_RESOLUTION:-}" ]] || log "legacy alias VNC_RESOLUTION honored; prefer WAAS_VNC_RESOLUTION"
+[[ -z "${VNC_COL_DEPTH:-}" ]] || log "legacy alias VNC_COL_DEPTH honored; prefer WAAS_VNC_COL_DEPTH"
+RESOLUTION="${WAAS_VNC_RESOLUTION:-${VNC_RESOLUTION:-1920x1080}}"
+DEPTH="${WAAS_VNC_COL_DEPTH:-${VNC_COL_DEPTH:-24}}"
+[[ "${RESOLUTION}" =~ ^[0-9]+x[0-9]+$ ]] || fail "WAAS_VNC_RESOLUTION must look like 1920x1080, got '${RESOLUTION}'"
+
+# Tombstone: WAAS_VNC_ENABLED=0 used to mean "RDP only" (Xvnc bound to
+# localhost behind the xrdp bridge). With RDP gone, ignoring it would turn
+# a template that asked for no external VNC into one that exposes VNC on
+# 0.0.0.0:5901 — refuse instead, same doctrine as VNC_PW above.
+[[ "${WAAS_VNC_ENABLED:-1}" == "1" ]] || fail "WAAS_VNC_ENABLED=${WAAS_VNC_ENABLED} is not supported: Xvnc is the only session listener and always runs (RDP is gone since 3.0.0)"
+
+# -UseBlacklist=0: the operator's Kubernetes TCP probe against this same
+# port opens a bare connection every few seconds without completing the
+# VncAuth handshake. TigerVNC counts that as a failed auth attempt and,
+# after BlacklistThreshold (default 5), blacklists the probe's source —
+# which then also blocks real guacd connections routed through the same
+# address. The port is never internet-facing (only the in-cluster
+# ClusterIP Service, itself gated by the api-server's connection-token
+# flow), so disabling VNC's own brute-force lockout here is safe.
+cat > "${RUNDIR}/supervisor.d/10-xvnc.conf" <<EOF
+[program:xvnc]
+command=/usr/bin/Xvnc ${DISPLAY:-:1} -geometry ${RESOLUTION} -depth ${DEPTH} -rfbport 5901 -rfbauth ${RUNDIR}/vnc.passwd -SecurityTypes VncAuth -AlwaysShared -UseBlacklist=0 -auth ${XAUTHORITY} -desktop waas
+priority=10
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+EOF
+
+# ------------------------------------------------------------------ audio
+# PulseAudio in plain user mode: no root, no setuid, no rtkit — the same
+# privilege profile as everything else here. Apps play into a null sink
+# (rendered policy below), guacd streams its monitor by connecting to the
+# native protocol on TCP 4713 (guacd params enable-audio /
+# audio-servername). Module loading is frozen after startup so neither an
+# in-session client nor a network peer can extend the daemon.
+PULSE_ENV=""
+if [[ "${WAAS_AUDIO_ENABLED:-1}" == "1" ]]; then
+    command -v pulseaudio >/dev/null || fail "WAAS_AUDIO_ENABLED=1 but pulseaudio is not in this image"
+    mkdir -p "${RUNDIR}/pulse"
+    sed "s|@RUNDIR@|${RUNDIR}|g" /etc/waas/pulse/default.pa.tpl > "${RUNDIR}/pulse/default.pa"
+    # Session apps reach the daemon through the unix socket, never TCP.
+    PULSE_ENV=",PULSE_SERVER=\"unix:${RUNDIR}/pulse/native\""
+    cat > "${RUNDIR}/supervisor.d/15-pulseaudio.conf" <<EOF
+[program:pulseaudio]
+command=/usr/bin/pulseaudio --daemonize=no --exit-idle-time=-1 --disallow-exit=yes --disallow-module-loading=yes --log-target=stderr -nF ${RUNDIR}/pulse/default.pa
+priority=15
+autorestart=true
+environment=HOME="${HOME}",PULSE_RUNTIME_PATH="${RUNDIR}/pulse/runtime",PULSE_STATE_PATH="${RUNDIR}/pulse/state"
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+EOF
+fi
+
+# ---------------------------------------------------------------- session
+cat > "${RUNDIR}/supervisor.d/20-session.conf" <<EOF
+[program:session]
+command=/usr/local/bin/waas-session
+priority=20
+autorestart=true
+startretries=10
+environment=DISPLAY="${DISPLAY:-:1}",XAUTHORITY="${XAUTHORITY}",HOME="${HOME}"${PULSE_ENV}
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+EOF
+
+# ------------------------------------------------------------- extensions
+# Layer hook: derived images (apps/hermes-agent, recipe `program:`
+# images, ...) drop scripts into /etc/waas/entrypoint.d/ to render their
+# own supervisor fragments and runtime config. Sourced (not exec'd) so
+# they share this script's env, helpers (log/fail) and strict mode.
+if [[ -d /etc/waas/entrypoint.d ]]; then
+    for hook in /etc/waas/entrypoint.d/*.sh; do
+        [[ -e "${hook}" ]] || continue
+        log "entrypoint hook: $(basename "${hook}")"
+        # shellcheck disable=SC1090
+        source "${hook}"
+    done
+fi
+
+# Runtime init hook: /etc/waas/init.d/ is DELIBERATELY a separate
+# directory from entrypoint.d/ (baked at build time — a volume mounted
+# there would shadow the image's own hooks). The operator/user mounts a
+# ConfigMap of *.sh here to run per-workspace initialisation at boot
+# without rebuilding the image. Runs AFTER the image's own hooks, same
+# privilege as everything else (UID 1000; only a dev-profile image with
+# sudo gives it a path to more). Anything it installs outside the home
+# PVC lives in the container layer: lost on pod restart.
+if [[ -d /etc/waas/init.d ]]; then
+    for hook in /etc/waas/init.d/*.sh; do
+        [[ -e "${hook}" ]] || continue
+        log "init.d hook: $(basename "${hook}")"
+        # shellcheck disable=SC1090
+        source "${hook}"
+    done
+fi
+
+log "starting services (audio: ${WAAS_AUDIO_ENABLED:-1}, resolution: ${RESOLUTION})"
+exec supervisord -n -c /etc/waas/supervisord.conf

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests"
+  ],
+  "packageRules": [
+    {
+      "description": "Patch and digest updates automerge once the required checks pass; the auto-release label makes release.yml cut a patch release after the merge.",
+      "matchUpdateTypes": ["patch", "digest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "labels": ["auto-release"]
+    },
+    {
+      "description": "OS release bumps are a deliberate decision: grouped per OS (unrelated cadences), labelled, reviewed by hand.",
+      "matchPackageNames": ["ubuntu"],
+      "matchUpdateTypes": ["major", "minor"],
+      "groupName": "ubuntu base image",
+      "labels": ["os-bump"],
+      "automerge": false
+    },
+    {
+      "matchPackageNames": ["debian"],
+      "matchUpdateTypes": ["major", "minor"],
+      "groupName": "debian base image",
+      "labels": ["os-bump"],
+      "automerge": false
+    },
+    {
+      "matchPackageNames": ["fedora"],
+      "matchUpdateTypes": ["major", "minor"],
+      "groupName": "fedora base image",
+      "labels": ["os-bump"],
+      "automerge": false
+    },
+    {
+      "description": "One PR for every actions/* bump, so one CI run instead of one per dependency.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Container tool images pinned in the toolkit scripts, the workflows and the Makefile.",
+      "managerFilePatterns": [
+        "/^\\.github/actions/.+\\.sh$/",
+        "/^\\.github/workflows/.+\\.yml$/",
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "(?<depName>[a-z0-9.\\/-]+\\/(?:binfmt|trivy|cosign|buildkit|hadolint|actionlint)):(?<currentValue>v?[a-zA-Z0-9.-]+)"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "OS_BASE_IMAGE defaults in the base Dockerfiles.",
+      "managerFilePatterns": ["/^base/(ubuntu|fedora)/Dockerfile$/"],
+      "matchStrings": ["ARG OS_BASE_IMAGE=(?<depName>[a-z-]+):(?<currentValue>[a-z0-9.-]+)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "OS references in images.yaml's os: map (the values CI actually injects).",
+      "managerFilePatterns": ["/^images\\.yaml$/"],
+      "matchStrings": ["OS_BASE_IMAGE: \"(?<depName>[a-z-]+):(?<currentValue>[a-z0-9.-]+)\""],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}
