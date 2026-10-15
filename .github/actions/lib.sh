@@ -4,10 +4,13 @@
 # Everything derives from the GitHub runner env; each value can be
 # overridden for a local run. REGISTRY_PASSWORD is the only input with
 # no default (the actions pass github.token). IMAGE_JSON, one pipeline
-# matrix entry, is exported as the IMG_*/SMOKE_* variables.
+# matrix entry, is exported as the IMG_*/SMOKE_* variables. `export`,
+# not a plain assignment: build_image.sh runs smoke_test.sh as a child
+# `sh`, which otherwise sees no SMOKE_* at all and silently falls back
+# to the standard profile with every protocol probe skipped.
 
 if [ -n "${IMAGE_JSON:-}" ]; then
-    eval "$(printf '%s' "${IMAGE_JSON}" | jq -r 'to_entries[] | "\(.key)=\(.value | tostring | @sh)"')"
+    eval "$(printf '%s' "${IMAGE_JSON}" | jq -r 'to_entries[] | "export \(.key)=\(.value | tostring | @sh)"')"
 fi
 
 : "${REGISTRY_PASSWORD:?}"
