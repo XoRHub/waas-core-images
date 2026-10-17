@@ -24,7 +24,7 @@ PROJECT_URL="${PROJECT_URL:-${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_RE
 
 COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.3
 # shellcheck disable=SC2034  # used by the sourcing scripts
-TRIVY_IMAGE=ghcr.io/aquasecurity/trivy:0.72.0
+TRIVY_IMAGE=ghcr.io/aquasecurity/trivy:0.76.0
 
 log() { printf '\n=== %s\n' "$*"; }
 
