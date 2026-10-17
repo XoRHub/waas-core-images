@@ -21,7 +21,7 @@ registry_login
 # run pre-provisioned one.
 docker buildx inspect waas >/dev/null 2>&1 || \
     docker buildx create --name waas \
-        --driver-opt image=moby/buildkit:v0.31.2 >/dev/null
+        --driver-opt image=moby/buildkit:v0.34.0 >/dev/null
 docker buildx use waas
 
 # QEMU fallback when the job lands on a runner of another arch
