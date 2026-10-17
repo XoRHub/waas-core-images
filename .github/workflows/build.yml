@@ -54,7 +54,7 @@ jobs:
       - name: shellcheck
         run: shellcheck -S warning .github/actions/lib.sh .github/actions/*/*.sh base/rootfs/usr/local/bin/*
       - name: actionlint
-        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
       - uses: astral-sh/setup-uv@v9.0.0
       - name: Toolkit unit tests
         run: uv run --with pyyaml==6.0.2 python -m unittest discover -s ci/tests -v
