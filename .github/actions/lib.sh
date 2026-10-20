@@ -22,7 +22,7 @@ SHORT_SHA=$(printf '%.8s' "${COMMIT_SHA}")
 SHA_TAG="g${SHORT_SHA}"
 PROJECT_URL="${PROJECT_URL:-${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}}"
 
-COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.3
+COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4
 # shellcheck disable=SC2034  # used by the sourcing scripts
 TRIVY_IMAGE=ghcr.io/aquasecurity/trivy:0.72.0
 
