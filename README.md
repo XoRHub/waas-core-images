@@ -16,7 +16,7 @@ images.yaml          layers, OS matrix, default archs/build args, trivy gate
 CONTRACT.md          the runtime API derived images rely on (semver'd)
 HARDENING.md         verifiable hardening checklist + threat model
 .github/actions/     shared CI toolkit (composite actions), consumed by both repos
-.github/workflows/   build, release, rebuild-weekly
+.github/workflows/   build, release, rebuild-weekly, cache-cleanup
 ci/tests/            unit tests of the toolkit's Python
 ```
 

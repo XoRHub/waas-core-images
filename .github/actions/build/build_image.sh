@@ -94,13 +94,21 @@ buildx_build() {
         "${IMG_CONTEXT}"
 }
 
+# PRs read the cache but don't write it: per-PR-ref caches blew the
+# 10 GB repo quota. Unset (local runs) keeps writing.
+CACHE_TO_FLAG="--cache-to type=gha,scope=${IMG_NAME}-${ARCH},mode=max"
+if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+    CACHE_TO_FLAG=""
+fi
+
 log "build (${IMG_ARCH}) ${IMAGE}:${ARCH_TAG}"
-# --no-cache on this invocation only: it also --cache-to's, so the push
-# build below hits the fresh cache and stays identical to what was
-# smoke-tested.
+# --no-cache on this invocation only (NO_CACHE is never set on PRs, only
+# by workflow_dispatch / the weekly cron on main). Where it --cache-to's,
+# the push build below hits the fresh cache; on PRs it hits this job's
+# local BuildKit cache instead. Either way the pushed artifact stays
+# identical to what was smoke-tested.
 # shellcheck disable=SC2086
-buildx_build --load ${NO_CACHE_FLAG} \
-    --cache-to "type=gha,scope=${IMG_NAME}-${ARCH},mode=max"
+buildx_build --load ${NO_CACHE_FLAG} ${CACHE_TO_FLAG}
 
 log "smoke test"
 SMOKE_IMAGE="${IMAGE}:${ARCH_TAG}" sh "$(dirname "$0")/smoke_test.sh"
