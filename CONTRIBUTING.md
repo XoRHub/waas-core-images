@@ -33,8 +33,9 @@ locally" means "works in CI".
   hook, a path, a tool), update it and state the semver level in the
   PR: removing or renaming is a major, adding is a minor.
 - If you changed the toolkit (`.github/actions/`), remember it is
-  consumed by `waas-workspace-images` at `actions/v1`: a compatible
-  change moves that tag after merge, a breaking one needs `actions/v2`.
+  consumed by `waas-workspace-images` at `@main` (unpinned): it applies
+  there on its next run, so a breaking change (renamed input, changed
+  script env contract) must come with the matching workspace change.
 
 CI builds only what your PR impacts (`README.md` § Pipeline) and pushes
 `g<sha>` tags for it; nothing is promoted from a PR.

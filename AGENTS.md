@@ -9,7 +9,7 @@ The `core-*` base images of WaaS Linux workspaces (TigerVNC Xvnc as
 the display server and the only remote-access listener, `tini` +
 `supervisord`, unprivileged, read-only-rootfs friendly) plus the CI
 toolkit (`.github/actions/`) that `waas-workspace-images` consumes at
-`actions/v1`. Every `base/rootfs` file and every `WAAS_*` variable
+`@main` (unpinned). Every `base/rootfs` file and every `WAAS_*` variable
 is API: `CONTRACT.md` lists what derived images rely on, and changing
 it is a semver decision (remove/rename = major).
 
@@ -57,8 +57,9 @@ and flag it if a change would:
   with in-pipeline parents even though this repo has none — the tests
   in `ci/tests/` model the workspace tree.
 - A change under `.github/actions/` is a change to the workspace
-  repo's toolkit: compatible → move the `actions/v1` tag; breaking
-  (renamed input, changed script env contract) → `actions/v2`.
+  repo's toolkit, consumed at `@main`: it applies there on its next
+  run. A breaking change (renamed input, changed script env contract)
+  must land together with the matching `waas-workspace-images` change.
 - Comments explain a non-obvious *why*; identifiers say the what.
 
 ## Verification loop

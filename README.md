@@ -99,10 +99,11 @@ build to the amd64 fleet under emulation if the arm fleet is down.
 
 One copy of each script, shared with `waas-workspace-images` through
 composite actions. This repo uses them as `./.github/actions/<name>`;
-the workspace repo pins `XoRHub/waas-core-images/.github/actions/<name>@actions/v1`
-(Renovate bumps it). `actions/vN` tags are distinct from the image
-tags `vX.Y.Z`: move `actions/v1` forward for compatible toolkit
-changes, cut `actions/v2` for a breaking one.
+the workspace repo consumes `XoRHub/waas-core-images/.github/actions/<name>@main`
+(unpinned, a stopgap until a shared CI repo). Anything merged to main
+here applies there on its next run; a breaking toolkit change (renamed
+input, changed script env contract) must land together with the
+matching `waas-workspace-images` change.
 
 | Action | Does |
 |---|---|
