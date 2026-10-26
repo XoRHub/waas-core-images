@@ -11,7 +11,7 @@ layers: [base]
 os:
   ubuntu-noble:
     buildArgs:
-      OS_BASE_IMAGE: "ubuntu:24.04"
+      OS_BASE_IMAGE: "ubuntu:26.04"
   debian-13:
     buildArgs:
       OS_BASE_IMAGE: "debian:13-slim"
