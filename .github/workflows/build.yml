@@ -49,7 +49,7 @@ jobs:
       - name: hadolint
         run: |
           # shellcheck disable=SC2046
-          docker run --rm -v "$PWD:/mnt" -w /mnt ghcr.io/hadolint/hadolint:2.12.0-alpine \
+          docker run --rm -v "$PWD:/mnt" -w /mnt ghcr.io/hadolint/hadolint:v2.15.1-alpine \
             hadolint --failure-threshold warning $(find . -name Dockerfile -o -name Dockerfile.generated)
       - name: shellcheck
         run: shellcheck -S warning .github/actions/lib.sh .github/actions/*/*.sh base/rootfs/usr/local/bin/*
