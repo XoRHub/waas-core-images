@@ -43,7 +43,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - name: hadolint
@@ -55,12 +55,12 @@ jobs:
         run: shellcheck -S warning .github/actions/lib.sh .github/actions/*/*.sh base/rootfs/usr/local/bin/*
       - name: actionlint
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: Toolkit unit tests
         run: uv run --with pyyaml==6.0.2 python -m unittest discover -s ci/tests -v
 
   setup:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       layer0: ${{ steps.pipeline.outputs.layer0 }}
       merge0: ${{ steps.pipeline.outputs.merge0 }}
@@ -97,7 +97,7 @@ jobs:
   carry:
     needs: setup
     if: needs.setup.outputs.carry != '[]'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +133,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.setup.outputs.layer0) }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/scan
@@ -145,7 +145,7 @@ jobs:
   merge-0:
     needs: [setup, layer-0]
     if: needs.setup.outputs.merge0 != '[]'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
