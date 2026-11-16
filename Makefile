@@ -30,7 +30,7 @@ smoke: build
 	SMOKE_IMAGE=$(TAG) SMOKE_VNC=1 SMOKE_AUDIO=1 sh .github/actions/build/smoke_test.sh
 
 lint:
-	docker run --rm -v "$(CURDIR):/mnt" -w /mnt ghcr.io/hadolint/hadolint:2.12.0-alpine \
+	docker run --rm -v "$(CURDIR):/mnt" -w /mnt ghcr.io/hadolint/hadolint:v2.15.1-alpine \
 		hadolint --failure-threshold warning $$(find . -name Dockerfile -o -name Dockerfile.generated)
 	docker run --rm -v "$(CURDIR):/mnt" -w /mnt koalaman/shellcheck:stable -S warning \
 		.github/actions/lib.sh .github/actions/*/*.sh base/rootfs/usr/local/bin/*
