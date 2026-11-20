@@ -38,7 +38,7 @@ env:
 jobs:
   pr-closed:
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       actions: write
     env:
@@ -48,7 +48,7 @@ jobs:
 
   sweep:
     if: github.event_name != 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       actions: write
     concurrency: cache-cleanup-sweep
